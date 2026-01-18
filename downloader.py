@@ -1,69 +1,35 @@
+from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp
+import os
+import uuid
 
-def choose_format():
-    print("\nPilih format audio:")
-    print("1. MP3")
-    print("2. M4A (AAC)")
-    print("3. OPUS")
-    print("4. FLAC (Lossless)")
+app = FastAPI(title="Music Downloader API")
 
-    return {
-        "1": "mp3",
-        "2": "m4a",
-        "3": "opus",
-        "4": "flac"
-    }.get(input("Masukkan pilihan (1-4): ").strip(), "mp3")
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Music Downloader Backend running"}
 
-def choose_quality():
-    print("\nPilih kualitas audio:")
-    print("1. 128 kbps")
-    print("2. 192 kbps")
-    print("3. 256 kbps")
-    print("4. 320 kbps")
-
-    return {
-        "1": "128",
-        "2": "192",
-        "3": "256",
-        "4": "320"
-    }.get(input("Masukkan pilihan (1-4): ").strip(), "192")
-
-
-def extract_metadata(url):
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-
-    artist = info.get("artist") or info.get("uploader") or ""
-    title = info.get("title") or ""
-
-    if not title:
-        raise Exception("Gagal mengambil metadata")
-
-    return artist, title
-
-
-def download_music(url, audio_format, quality, output_path="downloads"):
-    print("\nMengambil metadata...")
-    artist, title = extract_metadata(url)
-
-    # 🔥 PAKAI SEARCH, BUKAN LINK LANGSUNG
-    search_query = f"ytsearch5:{artist} - {title}"
+@app.get("/download")
+def download(
+    query: str = Query(..., description="Artist - Title or URL"),
+    format: str = "mp3",
+    quality: str = "320"
+):
+    file_id = str(uuid.uuid4())
+    output_template = f"{DOWNLOAD_DIR}/{file_id}.%(ext)s"
 
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": f"{output_path}/%(artist)s - %(title)s.%(ext)s",
+        "outtmpl": output_template,
 
-        "quiet": False,
+        # FIX YOUTUBE / YT MUSIC
         "geo_bypass": True,
         "nocheckcertificate": True,
-
-        # 🔥 FIX ERROR YOUTUBE / YT MUSIC
+        "quiet": True,
         "extractor_args": {
             "youtube": {
                 "player_client": ["android"]
@@ -77,104 +43,38 @@ def download_music(url, audio_format, quality, output_path="downloads"):
         "embedthumbnail": True,
     }
 
-    # Post processing
-    if audio_format == "flac":
+    # Postprocessing
+    if format == "flac":
         ydl_opts["postprocessors"] = [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "flac",
-            }
+            {"key": "FFmpegExtractAudio", "preferredcodec": "flac"}
         ]
     else:
         ydl_opts["postprocessors"] = [
             {
                 "key": "FFmpegExtractAudio",
-                "preferredcodec": audio_format,
+                "preferredcodec": format,
                 "preferredquality": quality,
             }
         ]
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([search_query])
-
-
-if __name__ == "__main__":
-    print("=== Music Downloader (YouTube Music FIXED) ===")
-
-    url = input("Masukkan URL lagu / YouTube Music: ").strip()
-    audio_format = choose_format()
-
-    if audio_format == "flac":
-        quality = None
-        print("\nFLAC dipilih (lossless)")
-    else:
-        quality = choose_quality()
-        print(f"\nFormat: {audio_format.upper()} | {quality} kbps")
-
-    print("\nFitur aktif:")
-    print("- Metadata artist & title")
-    print("- Embed cover album")
-    print("- Mode aman YouTube Music\n")
+    # SEARCH MODE (ANTI ERROR)
+    if not query.startswith("http"):
+        query = f"ytsearch1:{query}"
 
     try:
-        download_music(url, audio_format, quality)
-        print("\n✅ Download selesai!")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([query])
+
+        # Cari file hasil download
+        for file in os.listdir(DOWNLOAD_DIR):
+            if file.startswith(file_id):
+                return FileResponse(
+                    path=f"{DOWNLOAD_DIR}/{file}",
+                    filename=file,
+                    media_type="application/octet-stream"
+                )
+
+        return JSONResponse({"error": "File not found"}, status_code=500)
+
     except Exception as e:
-        print("\n❌ Error:", e)        "addmetadata": True,
-        "embedmetadata": True,
-        "writethumbnail": True,
-        "embedthumbnail": True,
-
-        # Lyrics (jika tersedia)
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitlesformat": "lrc",
-        "subtitleslangs": ["en", "id"],
-
-        # Embed lyric ke audio
-        "embedsubtitles": True,
-
-        "quiet": False,
-    }
-
-    # Post-processing audio
-    if audio_format == "flac":
-        ydl_opts["postprocessors"] = [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "flac",
-            }
-        ]
-    else:
-        ydl_opts["postprocessors"] = [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": audio_format,
-                "preferredquality": quality,
-            }
-        ]
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-
-if __name__ == "__main__":
-    print("=== Music Downloader Advanced ===")
-
-    url = input("Masukkan URL musik/video: ").strip()
-    audio_format = choose_format()
-
-    if audio_format == "flac":
-        quality = None
-        print("\nFLAC dipilih (lossless)")
-    else:
-        quality = choose_quality()
-        print(f"\nFormat: {audio_format.upper()} | {quality} kbps")
-
-    print("\nFitur aktif:")
-    print("- Embed cover album")
-    print("- Metadata artist & album")
-    print("- Embed lyric (jika tersedia)\n")
-
-    download_music(url, audio_format, quality)
-
-    print("\nDownload selesai!")
+        return JSONResponse({"error": str(e)}, status_code=500)
